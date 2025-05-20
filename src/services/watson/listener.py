@@ -1,5 +1,6 @@
 # src/services/watson/listener.py
 import logging
+import threading
 import time
 import json
 from ...utils.stomp_client import BaseListener
@@ -38,6 +39,9 @@ class WatsonListener(BaseListener):
                 return
 
             project_id = message_data.get("project_id")
+            if not project_id:
+                logger.error("Mensaje recibido sin project_id. Ignorando.")
+                return
             is_retry = message_data.get("retry", False)
 
             # Verificar si este project_id ya fue procesado antes
@@ -70,7 +74,7 @@ class WatsonListener(BaseListener):
             # para un ID que de alguna manera no estaba en processed_ids (menos probable si el estado es persistente).
             self.processed_ids.add(project_id)
             self.simulate_process(project_id)
-            db.mark_project_as_processed(project_id,status=constants.PROCESS_STATUS["COMPLETED"])
+
 
         except Exception as e:
             error_msg = f"Error procesando el mensaje en WatsonListener: {e}"
@@ -95,17 +99,25 @@ class WatsonListener(BaseListener):
     def simulate_process(self, project_id):
         """Simula la tarea de procesamiento de Watson."""
        
-        for i in range(1, 6):  # Simulación más corta
-            progress_msg = f"Clonando paso {i}/5 para {project_id}..."
-            logger.debug(progress_msg)
-            format_console_message(logging.DEBUG, "WATSON", progress_msg)
-            time.sleep(0.5)  # Simular trabajo
+        
+        try:
+            bash_script = "/home/liss/script-liss.sh"  # Ruta del script .sh
+            result = subprocess.run(
+                ["bash",bash_script],
+                capture_output=True,
+                text=True,
+                check=True)
 
-        completion_msg = f"Clonación simulada completada para ID: {project_id}"
-        logger.info(completion_msg)
-        format_console_message("SERVICE", "WATSON", completion_msg)
-        # Enviar la respuesta estándar de éxito
-        self.send_response(project_id, status=constants.PROCESS_STATUS["COMPLETED"])
+            print("Command executed successfully")
+            print("Output:", result.stdout)
+            self.send_response(project_id, status=constants.PROCESS_STATUS["COMPLETED"])  
+            db.mark_project_as_processed(project_id,status=constants.PROCESS_STATUS["COMPLETED"]) 
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Command failed with error code: {e.returncode}")
+            self.send_response(project_id, status=constants.PROCESS_STATUS["FAILED"])
+
+
 
     def send_response(self, project_id, status):
         """Envía un mensaje de RESPUESTA de vuelta a LISS con un estado específico."""
